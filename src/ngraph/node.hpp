@@ -109,6 +109,8 @@ namespace ngraph
         // Called after transition
         void delayed_validate_and_infer_types();
 
+        void  dump() const ;
+        
         /// \brief Get the string name for the type of the node, such as `Add` or `Multiply`.
         ///        The class name, must not contain spaces as it is used for codegen.
         /// \returns A const reference to the node's type name

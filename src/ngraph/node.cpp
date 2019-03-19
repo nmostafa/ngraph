@@ -80,6 +80,30 @@ void Node::set_output_size(size_t n)
     }
 }
 
+void __attribute__((noinline)) Node::dump() const
+{
+    //std::cout << *this;
+    
+    std::cout << get_name() << "\n";
+    std::cout << "INs: ";
+    for (auto& i : get_inputs())
+    {
+        std::cout << i.get_output().get_node()->get_name() << ", ";
+    }
+    std::cout << "\n";
+    auto i = 0;
+    for (auto& o : get_outputs()) 
+    {
+        std::cout << "OUT[" << i << "]:";
+        for (auto i : o.get_inputs())
+        {
+            std::cout << i->get_node()->get_name() << ", ";
+        }
+        std::cout << "\n";
+    }
+    
+}
+
 void Node::validate_and_infer_types()
 {
 }
