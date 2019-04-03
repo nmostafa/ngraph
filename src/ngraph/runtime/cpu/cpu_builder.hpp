@@ -288,6 +288,11 @@ namespace ngraph
                                 const std::vector<TensorViewWrapper>& out)
                 {
                 }
+
+                static void exec_in_plaidml(const ngraph::Node* node,                                                       
+                                            const std::vector<TensorViewWrapper>& args,                                     
+                                            const std::vector<TensorViewWrapper>& out, 
+                                            const std::string& tile_src);
             };
         }
     }

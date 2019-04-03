@@ -103,6 +103,8 @@
 #include "ngraph/type/element_type.hpp"
 #include "ngraph/util.hpp"
 
+#include <plaidml/plaidml++.h>
+
 #ifdef NGRAPH_DISTRIBUTED_OMPI_ENABLE
 #include <mpi.h>
 #include "ngraph/op/allreduce.hpp"
@@ -110,6 +112,8 @@
 
 using namespace std;
 using namespace ngraph;
+
+namespace vp = vertexai::plaidml;
 
 namespace ngraph
 {
@@ -227,7 +231,18 @@ namespace ngraph
             template <>
             void Builder::BUILDER_DECL(ngraph::op::Abs)
             {
-                BUILD_UNARY_ELEMWISE_FUNCTOR(runtime::cpu::kernel::abs);
+                auto& functors = external_function->get_functors();                                
+                //auto element_count = out[0].get_size();                                                        
+                auto& arg0_tensor = external_function->get_tensor_data(args[0].get_name());                    
+                auto& out0_tensor = external_function->get_tensor_data(out[0].get_name());                     
+                                                                                                   
+                auto functor = [&](CPURuntimeContext* ctx, CPUExecutionContext* ectx) {
+                    auto tile_src = std::string{"function (I) -> (O) { O = abs(I); }"};
+                    exec_in_plaidml(node, args, out, tile_src);
+                };                                                                                             
+                functors.emplace_back(functor);
+
+                //BUILD_UNARY_ELEMWISE_FUNCTOR(runtime::cpu::kernel::abs);
             }
 
             template <>
@@ -363,6 +378,39 @@ namespace ngraph
                     }
                 };
                 functors.emplace_back(functor);
+            }
+
+            void Builder::exec_in_plaidml(const ngraph::Node* node,                                                       
+                                          const std::vector<TensorViewWrapper>& args,                                     
+                                          const std::vector<TensorViewWrapper>& out, 
+                                          const std::string& tile_src)
+            {
+
+                auto& src = 
+                    external_function->get_tensor_data(node->get_input_tensor(0).get_name());
+                auto size = node->get_input_tensor(0).size();
+
+                // Check code/plaidml/main/public/plaidml/plaidml/cpp_test.cc for plaidml++.h example
+
+                // 1. create input varaibles placeholders
+                vp::placeholder ph{node->get_input_shape(0).size()};
+                std::vector<vp::variable> params;
+                params.emplace_back(ph);
+                vp::application app = vp::function{tile_src}.apply(params);
+
+                // 2. copy data over to input tensors
+                // check: PlaidML_Tensor::write(const void* p, size_t tensor_offset, size_t n)
+                tensor<char> in = // dev.allocate(shape<char>(ctx, {N, N}));
+                {
+                    // todo create a plaidml:tensor
+                    // copy data to it. 
+                    vp::mapping<char> mp = m_tensor.map(vp::map_for_write);
+                    const char* src = mp.raw() + tensor_offset;
+                    std::copy(src, src + n, dest);
+                } // mapping commits to tensor in dstr 
+                
+
+                // 3. Create and run invoker. Check bool ngraph::runtime::plaidml::PlaidML_Executable::call
             }
 
 #define TI(x) type_index(typeid(x))
