@@ -17,6 +17,7 @@
 include(FindOpenMP)
 
 set(SRC
+    ../plaidml/plaidml_translate.cpp
     cpu_backend.cpp
     cpu_builder.cpp
     cpu_call_frame.cpp
@@ -199,6 +200,7 @@ if (NGRAPH_CPU_ENABLE)
         target_link_libraries(cpu_backend PUBLIC codegen)
     endif()
     target_include_directories(cpu_backend SYSTEM PUBLIC libmkldnn)
+    # libplaidml.so includes
     target_include_directories(cpu_backend SYSTEM PUBLIC ${PLAIDML_INCLUDE_DIRS})
     
     if (NOT APPLE AND NOT MSVS)

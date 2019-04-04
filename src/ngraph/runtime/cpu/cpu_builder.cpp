@@ -104,6 +104,8 @@
 #include "ngraph/util.hpp"
 
 #include <plaidml/plaidml++.h>
+// need to borrow code from plaidml BE
+#include "ngraph/runtime/plaidml/plaidml_translate.hpp"
 
 #ifdef NGRAPH_DISTRIBUTED_OMPI_ENABLE
 #include <mpi.h>
@@ -114,6 +116,12 @@ using namespace std;
 using namespace ngraph;
 
 namespace vp = vertexai::plaidml;
+
+struct ngraph::runtime::cpu::Config
+{
+    std::shared_ptr<vertexai::ctx> ctx;
+    std::shared_ptr<vertexai::plaidml::device> dev;
+};
 
 namespace ngraph
 {
@@ -236,9 +244,9 @@ namespace ngraph
                 auto& arg0_tensor = external_function->get_tensor_data(args[0].get_name());                    
                 auto& out0_tensor = external_function->get_tensor_data(out[0].get_name());                     
                                                                                                    
-                auto functor = [&](CPURuntimeContext* ctx, CPUExecutionContext* ectx) {
+                auto functor = [&, node](CPURuntimeContext* ctx, CPUExecutionContext* ectx) {
                     auto tile_src = std::string{"function (I) -> (O) { O = abs(I); }"};
-                    exec_in_plaidml(node, args, out, tile_src);
+                    exec_unary_eltwise_plaidml(node, arg0_tensor, out0_tensor, tile_src);
                 };                                                                                             
                 functors.emplace_back(functor);
 
@@ -380,38 +388,75 @@ namespace ngraph
                 functors.emplace_back(functor);
             }
 
-            void Builder::exec_in_plaidml(const ngraph::Node* node,                                                       
-                                          const std::vector<TensorViewWrapper>& args,                                     
-                                          const std::vector<TensorViewWrapper>& out, 
-                                          const std::string& tile_src)
+            void Builder::exec_unary_eltwise_plaidml(const ngraph::Node* node,                                                       
+                                          void*& args,
+                                          void*& outs,
+                                          const std::string& tile_src
+                                          )
             {
 
-                auto& src = 
-                    external_function->get_tensor_data(node->get_input_tensor(0).get_name());
-                auto size = node->get_input_tensor(0).size();
-
-                // Check code/plaidml/main/public/plaidml/plaidml/cpp_test.cc for plaidml++.h example
-
-                // 1. create input varaibles placeholders
-                vp::placeholder ph{node->get_input_shape(0).size()};
-                std::vector<vp::variable> params;
-                params.emplace_back(ph);
-                vp::application app = vp::function{tile_src}.apply(params);
-
-                // 2. copy data over to input tensors
-                // check: PlaidML_Tensor::write(const void* p, size_t tensor_offset, size_t n)
-                tensor<char> in = // dev.allocate(shape<char>(ctx, {N, N}));
-                {
-                    // todo create a plaidml:tensor
-                    // copy data to it. 
-                    vp::mapping<char> mp = m_tensor.map(vp::map_for_write);
-                    const char* src = mp.raw() + tensor_offset;
-                    std::copy(src, src + n, dest);
-                } // mapping commits to tensor in dstr 
+                // TODO: Move this to builder initial setup
+                Config config = create_plaidml_config();
                 
+                auto dev = config.dev;
+                auto shape = node->get_input_shape(0);
+                auto element_type = node->get_input_element_type(0);
+                auto tensor_size_bytes = shape_size(shape) * element_type.size();
 
-                // 3. Create and run invoker. Check bool ngraph::runtime::plaidml::PlaidML_Executable::call
+                vp::tensor<char> in = dev->allocate(to_plaidml(config.ctx, element_type, shape, ngraph::runtime::plaidml::ConversionUse::FOR_IO));
+                vp::tensor<char> out = dev->allocate(to_plaidml(config.ctx, element_type, shape, ngraph::runtime::plaidml::ConversionUse::FOR_IO));
+                // create a mapping. Copy data over. 
+                // currently we don't have a PlaidML API to set the buffer :/
+                {
+                  vp::mapping<char> view = in.map(vp::map_for_write);
+                  char* dest = view.raw();
+                  std::copy((char*)args, (char*)args + tensor_size_bytes, dest);
+                }
+
+                vp::function abs_func(tile_src);
+                vp::invoker(config.ctx, abs_func) 
+               .set_input("I", in)
+               .set_output("O", out)
+               .invoke();
+
+
+                // map and copy output
+                {
+
+                  vp::mapping<char> view = out.map(vp::map_for_read);
+                  char* p = view.raw();
+                  float* dbg_f = (float*)p;
+                  std::copy(p, p + tensor_size_bytes, (char*)outs);
+#if 0
+                  float valid[4]={1, 2, 0, 4.75};
+                  std::copy((char*)valid, (char*)valid + 16, (char*)outs);
+#endif
+                }
             }
+
+            Config Builder::create_plaidml_config()
+            {
+                Config result;
+                vp::device device;
+                result.ctx = std::make_shared<vertexai::ctx>();
+                auto device_idx = 0;
+                // TODO: This currently throws if OpenCL is not installed. Look into fixing this. 
+                auto dev_configs = vp::enumerate_devices(result.ctx);
+                //"{ \"PLAIDML_DEVICE_IDS\":[\"llvm_cpu.0\"], \"PLAIDML_EXPERIMENTAL\":true }");
+
+                if (!dev_configs.size())
+                {
+                    throw std::runtime_error{"Unable to find any PlaidML devices"};
+                }
+                
+                device = dev_configs[0].open();
+
+                result.dev = std::make_shared<vp::device>(device);
+
+                return result;   
+            }
+
+
 
 #define TI(x) type_index(typeid(x))
 

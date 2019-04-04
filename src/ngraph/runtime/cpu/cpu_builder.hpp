@@ -269,6 +269,7 @@ namespace ngraph
 
             BuildOpMap& GetGlobalBuildDispatcher();
 
+            struct Config;
             class Builder
             {
             public:
@@ -289,11 +290,16 @@ namespace ngraph
                 {
                 }
 
-                static void exec_in_plaidml(const ngraph::Node* node,                                                       
-                                            const std::vector<TensorViewWrapper>& args,                                     
-                                            const std::vector<TensorViewWrapper>& out, 
-                                            const std::string& tile_src);
+                static void exec_unary_eltwise_plaidml(const ngraph::Node* node,                                                       
+                                            void*& args,                                     
+                                            void*& out, 
+                                            const std::string& tile_src
+                                            );
+
+                static Config create_plaidml_config();
             };
+
+
         }
     }
 }
